@@ -1,0 +1,83 @@
+<h4>Kernel Options</h4>
+<% if (!_.isEmpty(kernel_options)) { %>
+<p>
+<%- kernel_options %></p>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
+<h4>Kernel Options Post</h4>
+<% if (kernel_options_post) { %>
+<p>
+<%- kernel_options_post %></p>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
+<h4>Kernel Metadata</h4>
+<% if (ks_meta) { %>
+<p>
+<%- ks_meta %></p>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
+<h4>Additional Packages</h4>
+<% if (!_.isEmpty(packages)) { %>
+<pre>
+<% _.each(packages, function (package) { %><%- package %>
+<% })%></pre>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
+<h4>Kickstart Appends</h4>
+<% if (!_.isEmpty(ks_appends)) { %>
+<pre>
+<% _.each(ks_appends, function (ks_append) { %><%- ks_append %>
+<% })%></pre>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
+<h4>Additional Repositories</h4>
+<% if (!_.isEmpty(repos)) { %>
+    <table class="table table-condensed">
+        <thead>
+            <tr>
+            <th>Name</th>
+            <th>URL</th>
+            </tr>
+        </thead>
+        <tbody>
+          <% _.each(repos, function (repo) { %>
+              <tr>
+                <td><%- repo.name %></td>
+                <td><%- repo.url %></td>
+              </tr>
+          <% })%>
+        </tbody>
+     </table>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
+<h4>Partitions</h4>
+<% if (!_.isEmpty(partitions)) { %>
+    <table class="table table-condensed">
+        <thead>
+            <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>File System</th>
+            </tr>
+        </thead>
+        <tbody>
+          <% _.each(partitions, function (partition) { %>
+              <tr>
+                <td><%- partition.name %></td>
+                <td><%- partition.type %></td>
+                <td><%- partition.size %></td>
+                <td><%- partition.fs %></td>
+              </tr>
+          <% })%>
+        </tbody>
+     </table>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>

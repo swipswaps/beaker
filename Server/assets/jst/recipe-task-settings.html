@@ -1,0 +1,20 @@
+<% if (fetch_url) { %>
+    <h5>Fetch URL</h5>
+    <p><%- fetch_url %></p>
+    <% if (fetch_subdir) { %>
+        <h5>Fetch Subdirectory</h5>
+        <p><%- fetch_subdir %></p>
+    <% } else { %>
+        <em class="muted">(none)</em>
+    <% } %>
+<% } %>
+<h5>Role</h5>
+<p><%- role %></p>
+<h5>Task Parameters</h5>
+<% if (!_.isEmpty(params)) { %>
+<pre>
+<% _.each(params, function (param) { %><%- param.name %>=<%- param.value %>
+<% })%></pre>
+<% } else { %>
+    <em class="muted">(none)</em>
+<% } %>
