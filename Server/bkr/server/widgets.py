@@ -463,91 +463,7 @@ class JobQuickSearch(CompoundWidget):
 
         self.status_queued = Button(default="Status is Queued", name='status_queued')
 
-class AckPanel(RadioButtonList): 
 
-    javascript = [LocalJSLink('bkr','/static/javascript/jquery-ui-1.9.2.min.js', order=3),
-                  LocalJSLink('bkr','/static/javascript/loader_v2.js'),
-                  LocalJSLink('bkr','/static/javascript/response_v6.js')]
-
-    css =  [LocalCSSLink('bkr', '/static/css/smoothness/jquery-ui.css')]
-    params = ['widget_name','unreal_response','comment_id','comment_class']
-    template = """
-    <div xmlns:py="http://purl.org/kid/ns#"
-        class="${field_class}"
-        id="${field_id}"
-    >
-        <label py:for="value, desc, attrs in options" class="radio">
-            <input type="radio" name="${widget_name}" py:if="unreal_response != value" id="${field_id}_${value}" value="${value}" py:attrs="attrs" />
-            <input type="radio" name="${widget_name}" py:if="unreal_response == value" id="unreal_response" value="${value}" py:attrs="attrs" />
-            ${desc}
-        </label>
-        <a id="${comment_id}" class="${comment_class}" style="cursor:pointer;display:inline-block;margin-top:0.3em">comment</a>
-    </div>
-    """
-    
-    def __init__(self,*args,**kw):
-        #self.options = options 
-        self.validator = validators.NotEmpty() 
-        super(AckPanel,self).__init__(*args,**kw)
-
-    def display(self,value=None,*args,**params): 
-        #params['options']  = self.options
-        pre_ops = [(str(elem.id),elem.response.capitalize(),{}) for elem in model.Response.get_all()]
-        if len(pre_ops) is 0: #no responses in the Db ? lets get out of here
-            return
-        OPTIONS_ID_INDEX = 0
-        OPTIONS_RESPONSE_INDEX = 1
-        OPTIONS_ATTR_INDEX = 2
-        # Purpose of this for loops is to determine details of where the responses are in the options list
-        # and how to create a non response item as well (i.e 'Needs Review')
-        max_response_id = 0
-        for index,(id,response,attrs) in enumerate(pre_ops):
-            if response == 'Ack':
-                ACK_INDEX = index
-                ACK_ID = id
-            elif response == 'Nak':
-                NAK_INDEX = index
-                NAK_ID = id 
-            if id > max_response_id:
-                max_response_id = int(id) + 1 #this is a number which is one bigger than our biggest valid response_id
-        else: 
-            EXTRA_RESPONSE_INDEX = index + 1 
-        EXTRA_RESPONSE_RESPONSE = 'Needs Review' 
-        pre_ops.append((max_response_id,EXTRA_RESPONSE_RESPONSE,{}))
-        params['unreal_response'] = max_response_id # we use this in the template to determine which response is not a real one
-        
-        rs_id = value
-        rs = model.RecipeSet.by_id(rs_id)
-        if not rs.is_finished():
-            return 
-        the_opts = pre_ops
-
-        #If not nacked
-        if not rs.nacked: # We need to review 
-            if not rs.is_failed(): #it's passed,
-                rs.nacked = model.RecipeSetResponse(type='ack') # so we will auto ack it
-                the_opts[ACK_INDEX] = (the_opts[ACK_INDEX][OPTIONS_ID_INDEX],the_opts[ACK_INDEX][OPTIONS_RESPONSE_INDEX],{'checked': 1 })
-                del(the_opts[EXTRA_RESPONSE_INDEX])
-            else:
-                the_opts[EXTRA_RESPONSE_INDEX] = (the_opts[EXTRA_RESPONSE_INDEX][OPTIONS_ID_INDEX],the_opts[EXTRA_RESPONSE_INDEX][OPTIONS_RESPONSE_INDEX],{'checked': 1 }) 
-                params['comment_class'] = 'hidden'
-
-        else: #Let's get aout value from the db  
-            if rs.nacked.response == model.Response.by_response('ack'):# We've acked it 
-                the_opts[ACK_INDEX] = (the_opts[ACK_INDEX][OPTIONS_ID_INDEX],the_opts[ACK_INDEX][OPTIONS_RESPONSE_INDEX],{'checked': 1 })
-                del(the_opts[EXTRA_RESPONSE_INDEX])
-            elif  rs.nacked.response == model.Response.by_response('nak'): # We've naked it
-                the_opts[NAK_INDEX] = (the_opts[NAK_INDEX][OPTIONS_ID_INDEX],the_opts[NAK_INDEX][OPTIONS_RESPONSE_INDEX],{'checked': 1 })
-                del(the_opts[EXTRA_RESPONSE_INDEX])
-        params['widget_name'] = 'response_box_%s' % rs_id 
-        params['options'] = the_opts
-        try:
-            params['comment_id'] = "comment_%s" % (params['name'])
-        except KeyError,e:
-            log.debug("Unable to use name given to %s for comment id" % self.__class__.__name__)
-            params['comment_id'] = "comment_%s" % rs_id
-        return super(AckPanel,self).display(value,*args,**params)
- 
 class JobMatrixReport(Form):     
     javascript = [LocalJSLink('bkr','/static/javascript/jquery-ui-1.9.2.min.js', order=3),
                   LocalJSLink('bkr', '/static/javascript/job_matrix_v2.js')]
@@ -1028,49 +944,6 @@ class TasksWidget(CompoundWidget):
     link = LinkRemoteFunction(name='link', before='task_search_before()', on_complete='task_search_complete()')
 
 
-class RecipeSetWidget(CompoundWidget):
-    javascript = []
-    css = []
-    template = "bkr.server.templates.recipe_set"
-    params = ['recipeset','show_priority','action','priorities_list','can_ack_nak']
-    member_widgets = ['priority_widget','retentiontag_widget','ack_panel_widget', 'product_widget', 'action_widget']
-    def __init__(self, priorities_list=None, *args, **kw):
-        self.action_widget = RecipeTaskActionWidget()
-        self.priorities_list = priorities_list
-        self.ack_panel_widget = AckPanel()
-        self.priority_widget = PriorityWidget()
-        self.retentiontag_widget = RetentionTagWidget()
-        if 'recipeset' in kw:
-            self.recipeset = kw['recipeset']
-        else:
-            self.recipeset = None
-
-    def update_params(self, d):
-        super(RecipeSetWidget,self).update_params(d)
-        recipeset = d['recipeset']
-        owner_groups = [g.group_name for g in recipeset.job.owner.groups]
-        user = identity.current.user
-        if recipeset.can_set_response(user):
-            can_ack_nak = True
-        else:
-            #Can't ack if we don't fulfil these requirements
-            can_ack_nak = False
-        d['can_ack_nak'] = can_ack_nak
-
-
-class RecipeTaskActionWidget(RPC):
-    template = 'bkr.server.templates.action'
-    """
-    RecipeTaskActionWidget will display the appropriate actions for a task
-    """
-    def __init__(self, *args, **kw):
-        super(RecipeTaskActionWidget,self).__init__(*args, **kw)
-    
-    def display(self, task, *args, **params): 
-        params['task'] = task
-        return super(RecipeTaskActionWidget, self).display(*args, **params)
-
-
 class ReportProblemForm(RemoteForm):
     template = 'bkr.server.templates.report_problem_form'
     fields=[
@@ -1135,85 +1008,6 @@ class RecipeWidget(CompoundWidget):
                       d['recipe'].dyn_systems.count())
         d['recipe_status_reserved'] = TaskStatus.reserved
 
-class ProductWidget(SingleSelectField, RPC):
-    javascript = [LocalJSLink('bkr', '/static/javascript/job_product.js')]
-    validator = validators.NotEmpty()
-    params = ['action', 'job_id']
-    action  = '/jobs/update'
-    before = 'job_product_before()'
-    on_complete = 'job_product_complete()'
-    on_success = 'job_product_save_success()'
-    on_failure = 'job_product_save_failure()'
-    validator = validators.NotEmpty()
-    product_deselected = 0
-
-    def __init__(self, *args, **kw):
-       self.options = []
-       self.field_class = 'singleselectfield'
-
-    def display(self,value=None, *args, **params):
-        params['options'] =[(self.product_deselected, 'No Product')] + \
-            [(elem.id,elem.name) for elem in model.Product.query.order_by(model.Product.name).all()]
-        return super(ProductWidget,self).display(value,**params)
-
-    def update_params(self, d):
-        super(ProductWidget, self).update_params(d)
-        d['attrs']['id'] = 'job_product'
-        d['attrs']['class'] = 'input-block-level'
-        d['attrs']['onchange'] = "ProductChange('%s',%s, %s)" % (
-            url(d.get('action')),
-            jsonify_for_html({'id': d.get('job_id')}),
-            jsonify_for_html(self.get_options(d)),
-            )
-
-class RetentionTagWidget(SingleSelectField, RPC): #FIXME perhaps I shoudl create a parent that both Retention and Priority inherit from
-    javascript = [LocalJSLink('bkr', '/static/javascript/job_retentiontag.js')]
-    validator = validators.NotEmpty()
-    params = ['action', 'job_id']
-    action  = '/jobs/update'
-    before = 'job_retentiontag_before()'
-    on_complete = 'job_retentiontag_complete()'
-    on_success = 'job_retentiontag_save_success()'
-    on_failure = 'job_retentiontag_save_failure()'
-
-    def __init__(self, *args, **kw):
-       self.options = []
-       self.field_class = 'singleselectfield'
-
-    def display(self,value=None, **params):
-        params['options'] = [(elem.id,elem.tag) for elem in model.RetentionTag.query.all()]
-        return super(RetentionTagWidget,self).display(value, **params)
-
-    def update_params(self, d):
-        super(RetentionTagWidget, self).update_params(d)
-        d['attrs']['id'] = 'job_retentiontag'
-        d['attrs']['onchange'] = "RetentionTagChange('%s',%s, %s)" % (
-            url(d.get('action')),
-            jsonify_for_html({'id': d.get('job_id')}),
-            jsonify_for_html(self.get_options(d)),
-            )
-
-
-class PriorityWidget(SingleSelectField):   
-   validator = ValidEnumValue(model.TaskPriority)
-   params = ['default','controller'] 
-   def __init__(self,*args,**kw): 
-       self.options = [] 
-       self.field_class = 'singleselectfield' 
-
-   def display(self,obj,value=None,**params):           
-       if 'priorities' in params: 
-           params['options'] = [(pri, pri.value) for pri in params['priorities']]
-       else:
-           params['options'] = [(pri, pri.value) for pri in model.TaskPriority]
-       if isinstance(obj,model.Job):
-           if 'id_prefix' in params:
-               params['attrs'] = {'id' : '%s_%s' % (params['id_prefix'],obj.id) }
-       elif obj:
-           if 'id_prefix' in params:
-               params['attrs'] = {'id' : '%s_%s' % (params['id_prefix'],obj.id) } 
-           value = obj.priority
-       return super(PriorityWidget,self).display(value or None,**params)
 
 class AlphaNavBar(Widget):
     template = "bkr.server.templates.alpha_navbar"
@@ -1222,36 +1016,6 @@ class AlphaNavBar(Widget):
     def __init__(self,letters,keyword='alpha',*args,**kw):
         self.letters = letters 
         self.keyword = keyword
-
-
-class JobWhiteboard(RPC, CompoundWidget):
-    """
-    Widget for displaying/updating a job's whiteboard. Saves asynchronously using js.
-    """
-
-    template = 'bkr.server.templates.job_whiteboard'
-    hidden_id = HiddenField(name='id')
-    field = TextField(name='whiteboard')
-    member_widgets = ['hidden_id', 'field']
-    params = ['action', 'form_attrs', 'job_id', 'readonly']
-    params_doc = {'action': 'Form action (URL to submit to)',
-                  'form_attrs': 'Additional HTML attributes to set on the <form>',
-                  'job_id': 'Job id whose whiteboard is being displayed in this widget',
-                  'readonly': 'Whether changes to the whiteboard are forbidden'}
-    action = '/jobs/update'
-    form_attrs = {}
-    readonly = False
-    # these are references to js functions defined in the widget template:
-    before = 'job_whiteboard_before()'
-    on_complete = 'job_whiteboard_complete()'
-    on_success = 'job_whiteboard_save_success()'
-    on_failure = 'job_whiteboard_save_failure()'
-
-    # taken from turbogears.widgets.RemoteForm
-    def update_params(self, d):
-        super(JobWhiteboard, self).update_params(d)
-        d['form_attrs']['onsubmit'] = "return !remoteFormRequest(this, null, %s);" % (
-            jsonify_for_html(self.get_options(d)))
 
 
 class TaskActionWidget(RPC):
@@ -1302,20 +1066,6 @@ class JobActionWidget(CompoundWidget):
                                       'callback' : 'job_delete_success',
                                       'show_icon': False}
         return super(JobActionWidget, self).display(task, **params)
-
-
-class JobPageActionWidget(JobActionWidget):
-    params = []
-    javascript = [LocalJSLink('bkr', '/static/javascript/job_page_delete.js'),
-        LocalJSLink('bkr', '/static/javascript/util.js')]
-    delete_link = DeleteLinkWidgetForm()
-
-    def update_params(self, d):
-        super(JobPageActionWidget, self).update_params(d)
-        value = {'t_id' : d['job_details'].get('t_id') }
-        d['job_delete_attrs'] = { 'value' : value,
-                                  'show_icon': False,
-                                  'action' : d['job_delete_attrs'].get('action') }
 
 
 class DistroTreeInstallOptionsWidget(Widget):

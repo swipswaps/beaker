@@ -253,34 +253,6 @@ class Root(RPCRoot):
         install_options = system.manual_provision_install_options(distro_tree)
         return install_options.as_strings()
 
-    @expose(format='json')
-    def change_priority_recipeset(self, priority, recipeset_id):
-        user = identity.current.user
-        if not user:
-            return {'success' : None, 'msg' : 'Must be logged in' }
-
-        try:
-            recipeset = RecipeSet.by_id(recipeset_id)
-        except NoResultFound as e:
-            log.error('No rows returned for recipeset_id %s in change_priority_recipeset:%s' % (recipeset_id,e))
-            return { 'success' : None, 'msg' : 'RecipeSet is not valid' }
-
-        try: 
-            priority = TaskPriority.from_string(priority)
-        except ValueError:
-            log.exception('Invalid priority')
-            return { 'success' : None, 'msg' : 'Priority not found', 'current_priority' : recipeset.priority.value }
-
-        if priority not in recipeset.allowed_priorities(user):
-            return {'success' : None, 'msg' : 'Insufficient privileges for that priority', 'current_priority' : recipeset.priority.value }
-
-        old_priority = recipeset.priority.value if recipeset.priority else None
-        recipeset.priority = priority
-        recipeset.record_activity(user=identity.current.user, service=u'WEBUI',
-                                  field=u'Priority', action=u'Changed', old=old_priority,
-                                  new=priority.value)
-        return {'success' : True } 
-
     @expose(template='bkr.server.templates.grid')
     @expose(template='bkr.server.templates.systems_feed', format='xml', as_format='atom',
             content_type='application/atom+xml', accept_format='application/atom+xml')

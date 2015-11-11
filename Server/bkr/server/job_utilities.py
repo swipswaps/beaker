@@ -5,7 +5,6 @@
 # (at your option) any later version.
 
 from bkr.server.model import RetentionTag, Product
-from bkr.server.widgets import ProductWidget
 from sqlalchemy.orm.exc import NoResultFound
 
 import logging
@@ -43,14 +42,7 @@ class Utility:
         new_retentiontag = retentiontag
 
         if new_retentiontag.requires_product() != bool(the_product):
-            if new_retentiontag.requires_product():
-                vars = {cls._needs_product: 1,
-                        'INVALID_PRODUCTS': [ProductWidget.product_deselected]}
-            else:
-                vars = {cls._needs_no_product:1}
-            return {'success': False,
-                    'msg': 'Incompatible product and tags',
-                    'vars': vars}
+            return {'success': False, 'msg': 'Incompatible product and tags'}
         job.retention_tag = new_retentiontag
         return {'success': True}
 

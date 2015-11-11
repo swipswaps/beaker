@@ -13,8 +13,7 @@ from sqlalchemy import and_
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm.exc import NoResultFound
 from bkr.server.widgets import myPaginateDataGrid, \
-    RecipeWidget, RecipeSetWidget, PriorityWidget, RetentionTagWidget, \
-    SearchBar, JobWhiteboard, ProductWidget, JobActionWidget, JobPageActionWidget, \
+    SearchBar, JobActionWidget, \
     HorizontalForm, BeakerDataGrid
 from bkr.server.xmlrpccontroller import RPCRoot
 from bkr.server.helpers import make_link
@@ -35,15 +34,15 @@ from bkr.server.model import (Job, RecipeSet, RetentionTag, TaskBase,
                               TaskPriority, User, Group, MachineRecipe,
                               DistroTree, TaskPackage, RecipeRepo,
                               RecipeKSAppend, Task, Product, GuestRecipe,
-                              RecipeTask, RecipeTaskParam, RecipeSetResponse,
-                              Response, StaleTaskStatusException,
+                              RecipeTask, RecipeTaskParam,
+                              StaleTaskStatusException,
                               RecipeSetActivity, System, RecipeReservationRequest,
                               TaskStatus, RecipeSetComment)
 
 from bkr.common.bexceptions import BeakerException, BX
 from bkr.server.flask_util import auth_required, convert_internal_errors, \
     BadRequest400, NotFound404, Forbidden403, Conflict409, request_wants_json, \
-    read_json_request
+    read_json_request, render_tg_template
 from flask import request, jsonify, make_response
 from bkr.server.util import parse_untrusted_xml
 import cgi
@@ -74,20 +73,6 @@ class Jobs(RPCRoot):
     # For XMLRPC methods in this class.
     exposed = True 
     job_list_action_widget = JobActionWidget()
-    job_page_action_widget = JobPageActionWidget()
-    recipeset_widget = RecipeSetWidget()
-    recipe_widget = RecipeWidget()
-    priority_widget = PriorityWidget() #FIXME I have a feeling we don't need this as the RecipeSet widget declares an instance of it
-    product_widget = ProductWidget()
-    retention_tag_widget = RetentionTagWidget()
-    job_type = { 'RS' : RecipeSet,
-                 'J'  : Job
-               }
-    whiteboard_widget = JobWhiteboard()
-
-    hidden_id = widgets.HiddenField(name='id')
-    confirm = widgets.Label(name='confirm', default="Are you sure you want to cancel?")
-    message = widgets.TextArea(name='msg', label=_(u'Reason?'), help_text=_(u'Optional'))
 
     _upload = widgets.FileField(name='filexml', label='Job XML')
     form = HorizontalForm(
@@ -97,13 +82,6 @@ class Jobs(RPCRoot):
         submit_text = _(u'Submit Data')
     )
     del _upload
-
-    cancel_form = widgets.TableForm(
-        'cancel_job',
-        fields = [hidden_id, message, confirm],
-        action = 'really_cancel',
-        submit_text = _(u'Yes')
-    )
 
     job_form = JobForm()
 
@@ -137,18 +115,6 @@ class Jobs(RPCRoot):
         self._check_job_deletability(t_id, job)
         Job.delete_jobs([job])
         return [t_id]
-
-    @expose()
-    @identity.require(identity.not_anonymous())
-    @restrict_http_method('post')
-    def delete_job_page(self, t_id):
-        try:
-            self._delete_job(t_id)
-            flash(_(u'Succesfully deleted %s' % t_id))
-        except (BeakerException, TypeError):
-            flash(_(u'Unable to delete %s' % t_id))
-            redirect('.')
-        redirect('./mine')
 
     @expose()
     @identity.require(identity.not_anonymous())
@@ -674,21 +640,6 @@ class Jobs(RPCRoot):
             raise BX(_('No Tasks! You can not have a recipe with no tasks!'))
         return recipe
 
-    @expose('json')
-    def update_recipe_set_response(self,recipe_set_id,response_id):
-        rs = RecipeSet.by_id(recipe_set_id)
-        old_response = None
-        if rs.nacked is None:
-            rs.nacked = RecipeSetResponse(response_id=response_id)
-        else:
-            old_response = rs.nacked.response
-            rs.nacked.response = Response.by_id(response_id)
-        rs.record_activity(user=identity.current.user, service=u'WEBUI',
-                           field=u'Ack/Nak', action=u'Changed', old=old_response,
-                           new=rs.nacked.response)
-
-        return {'success' : 1, 'rs_id' : recipe_set_id }
-
     @cherrypy.expose
     @identity.require(identity.not_anonymous())
     def set_retention_product(self, job_t_id, retention_tag_name, product_name):
@@ -745,7 +696,10 @@ class Jobs(RPCRoot):
     def set_response(self, taskid, response):
         """
         Updates the response (ack/nak) for a recipe set, or for all recipe sets 
-        in a job. This is part of the results reviewing system.
+        in a job.
+
+        Deprecated: setting 'nak' is a backwards compatibility alias for 
+        waiving a recipe set. Use the JSON API to set {waived: true} instead.
 
         :param taskid: see above
         :type taskid: string
@@ -753,33 +707,15 @@ class Jobs(RPCRoot):
         :type response: string
         """
         job = TaskBase.get_by_t_id(taskid)
-        if job.can_set_response(identity.current.user):
-            job.set_response(response)
-        else:
+        if not job.can_waive(identity.current.user):
             raise BeakerException('No permission to modify %s' % job)
-
-    @expose(format='json')
-    def save_response_comment(self,rs_id,comment):
-        try:
-            rs = RecipeSet.by_id(rs_id)
-            if not rs.comments:
-                rs.comments.append(RecipeSetComment())
-            rs.comments[0].comment = comment
-            rs.comments[0].user = identity.current.user
-            rs.comments[0].created = datetime.datetime.utcnow()
-            session.flush() 
-            return {'success' : True, 'rs_id' : rs_id }
-        except Exception, e:
-            log.error(e)
-            return {'success' : False, 'rs_id' : rs_id }
-
-    @expose(format='json')
-    def get_response_comment(self,rs_id):      
-        rs = RecipeSet.by_id(rs_id)
-        if rs.comments:
-            return {'comment' : rs.comments[0].comment, 'rs_id' : rs_id }
+        if response == 'nak':
+            waived = True
+        elif response == 'ack':
+            waived = False
         else:
-            return {'comment' : 'No comment', 'rs_id' : rs_id }
+            raise ValueError('Unrecognised response %r' % response)
+        job.set_waived(waived)
 
     @cherrypy.expose
     @identity.require(identity.not_anonymous())
@@ -796,11 +732,6 @@ class Jobs(RPCRoot):
                              (stop_type, job.stop_types)))
         kwargs = dict(msg = msg)
         return getattr(job,stop_type)(**kwargs)
-
-    @expose(format='json')
-    def to_xml(self, id):
-        jobxml = Job.by_id(id).to_xml().toxml()
-        return dict(xml=jobxml)
 
     @expose(template='bkr.server.templates.grid')
     @paginate('list',default_order='-id', limit=50)
@@ -890,145 +821,6 @@ class Jobs(RPCRoot):
                     options=search_options,
                     searchvalue=searchvalue)
 
-    @identity.require(identity.not_anonymous())
-    @expose()
-    def really_cancel(self, id, msg=None):
-        """
-        Confirm cancel job
-        """
-        try:
-            job = Job.by_id(id)
-        except InvalidRequestError:
-            flash(_(u"Invalid job id %s" % id))
-            redirect(".")
-        if not job.can_cancel(identity.current.user):
-            flash(_(u"You don't have permission to cancel job id %s" % id))
-            redirect(".")
-
-        try:
-            job.cancel(msg)
-        except StaleTaskStatusException, e:
-            log.warn(str(e))
-            session.rollback()
-            flash(_(u"Could not cancel job id %s. Please try later" % id))
-            redirect(".")
-        else:
-            job.record_activity(user=identity.current.user, service=u'WEBUI',
-                                field=u'Status', action=u'Cancelled', old='', new='')
-            flash(_(u"Successfully cancelled job %s" % id))
-            redirect('/jobs/mine')
-
-    @identity.require(identity.not_anonymous())
-    @expose(template="bkr.server.templates.form")
-    def cancel(self, id):
-        """
-        Confirm cancel job
-        """
-        try:
-            job = Job.by_id(id)
-        except InvalidRequestError:
-            flash(_(u"Invalid job id %s" % id))
-            redirect(".")
-        if not job.can_cancel(identity.current.user):
-            flash(_(u"You don't have permission to cancel job id %s" % id))
-            redirect(".")
-        return dict(
-            title = 'Cancel Job %s' % id,
-            form = self.cancel_form,
-            action = './really_cancel',
-            options = {},
-            value = dict(id = job.id,
-                         confirm = 'really cancel job %s?' % id),
-        )
-
-    @identity.require(identity.not_anonymous())
-    @expose(format='json')
-    def update(self, id, **kw):
-        # XXX Thus function is awkward and needs to be cleaned up.
-        try:
-            job = Job.by_id(id)
-        except InvalidRequestError:
-            raise cherrypy.HTTPError(status=400, message='Invalid job id %s' % id)
-        if not job.can_change_product(identity.current.user) or not \
-            job.can_change_retention_tag(identity.current.user):
-            raise cherrypy.HTTPError(status=403,
-                    message="You don't have permission to update job id %s" % id)
-        returns = {'success' : True, 'vars':{}}
-        if 'retentiontag' in kw and 'product' in kw:
-            retention_tag = RetentionTag.by_id(kw['retentiontag'])
-            if int(kw['product']) == ProductWidget.product_deselected:
-                product = None
-            else:
-                product = Product.by_id(kw['product'])
-            old_tag = job.retention_tag if job.retention_tag else None
-            returns.update(Utility.update_retention_tag_and_product(job,
-                           retention_tag, product))
-            job.record_activity(user=identity.current.user, service=u'WEBUI',
-                                field=u'Retention Tag', action='Changed',
-                                old=old_tag.tag, new=retention_tag.tag)
-        elif 'retentiontag' in kw:
-            retention_tag = RetentionTag.by_id(kw['retentiontag'])
-            old_tag = job.retention_tag if job.retention_tag else None
-            returns.update(Utility.update_retention_tag(job, retention_tag))
-            job.record_activity(user=identity.current.user, service=u'WEBUI',
-                                field=u'Retention Tag', action='Changed',
-                                old=old_tag.tag, new=retention_tag.tag)
-        elif 'product' in kw:
-            if int(kw['product']) == ProductWidget.product_deselected:
-                product = None
-            else:
-                product = Product.by_id(kw['product'])
-            returns.update(Utility.update_product(job, product))
-        if 'whiteboard' in kw:
-            job.whiteboard = kw['whiteboard']
-        return returns
-
-    @expose(template="bkr.server.templates.job") 
-    def default(self, id):
-        try:
-            job = Job.by_id(id)
-        except InvalidRequestError:
-            flash(_(u"Invalid job id %s" % id))
-            redirect(".")
-
-        if job.counts_as_deleted():
-            flash(_(u'Invalid %s, has been deleted' % job.t_id))
-            redirect(".")
-
-        recipe_set_history = [RecipeSetActivity.query.with_parent(elem,"activity") for elem in job.recipesets]
-        recipe_set_data = []
-        for query in recipe_set_history:
-            for d in query:
-                recipe_set_data.append(d)
-
-        recipe_set_data += job.activity
-        recipe_set_data = sorted(recipe_set_data, key=lambda x: x.created, reverse=True)
-
-        job_history_grid = BeakerDataGrid(name='job_history_datagrid', fields= [
-                               BeakerDataGrid.Column(name='user', getter= lambda x: x.user, title='User', options=dict(sortable=True)),
-                               BeakerDataGrid.Column(name='service', getter= lambda x: x.service, title='Via', options=dict(sortable=True)),
-                               BeakerDataGrid.Column(name='created', title='Created', getter=lambda x: x.created, options = dict(sortable=True)),
-                               BeakerDataGrid.Column(name='object_name', getter=lambda x: x.object_name(), title='Object', options=dict(sortable=True)),
-                               BeakerDataGrid.Column(name='field_name', getter=lambda x: x.field_name, title='Field Name', options=dict(sortable=True)),
-                               BeakerDataGrid.Column(name='action', getter=lambda x: x.action, title='Action', options=dict(sortable=True)),
-                               BeakerDataGrid.Column(name='old_value', getter=lambda x: x.old_value, title='Old value', options=dict(sortable=True)),
-                               BeakerDataGrid.Column(name='new_value', getter=lambda x: x.new_value, title='New value', options=dict(sortable=True)),])
-
-        return_dict = dict(title = 'Job',
-                           recipeset_widget = self.recipeset_widget,
-                           recipe_widget = self.recipe_widget,
-                           hidden_id = widgets.HiddenField(name='job_id',value=job.id),
-                           job_history = recipe_set_data,
-                           job_history_grid = job_history_grid,
-                           whiteboard_widget = self.whiteboard_widget,
-                           action_widget = self.job_page_action_widget,
-                           delete_action = url('delete_job_page'),
-                           job = job,
-                           product_widget = self.product_widget,
-                           retention_tag_widget = self.retention_tag_widget,
-                          )
-        return return_dict
-
 def _get_job_by_id(id):
     """Get job by ID, reporting HTTP 404 if the job is not found"""
     try:
@@ -1046,7 +838,10 @@ def get_job(id):
     job = _get_job_by_id(id)
     if request_wants_json():
         return jsonify(job.__json__())
-    return NotFound404('Fall back to old job page')
+    return render_tg_template('bkr.server.templates.job', {
+        'title': job.t_id, # N.B. JobHeaderView in JS updates the page title
+        'job': job,
+    })
 
 @app.route('/jobs/<int:id>.xml', methods=['GET'])
 def job_xml(id):

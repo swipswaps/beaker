@@ -228,25 +228,6 @@ class TestRecipeView(WebDriverTestCase):
         # "Show Results" should be activated for the recipe
         b.find_element_by_css_selector('#recipe%s .results-tab.active' % recipe.id)
 
-    # https://bugzilla.redhat.com/show_bug.cgi?id=674025
-    def test_task_anchor_on_job_page(self):
-        with session.begin():
-            recipes = [data_setup.create_recipe(distro_tree=self.distro_tree) for _ in range(10)]
-            job = data_setup.create_job_for_recipes(recipes, owner=self.user)
-        b = self.browser
-        # bkr/jobs/id#task<id>
-        # for multi recipe jobs, only the recipe to which the task belongs should be visible
-        # choose a recipe and task somewhere in the middle
-        task = job.recipesets[0].recipes[6].tasks[0].id
-        recipe = recipes[6]
-        b.get(get_server_base() + 'jobs/%s#task%s' %(job.id,task))
-        # "Show Results" should be activated for the recipe
-        b.find_element_by_css_selector('#recipe%s .results-tab.active' % recipe.id)
-        recipes.remove(recipe)
-        for r in recipes:
-            # "Hide Results" should be activated for the recipe
-            b.find_element_by_css_selector('#recipe%s .hide-results-tab.active' % r.id)
-
     def test_no_failed_results(self):
         with session.begin():
             the_recipe = data_setup.create_recipe()
@@ -355,6 +336,28 @@ class TestRecipeView(WebDriverTestCase):
                     % recipe.id).click()
             self.check_task_hidden(recipe, failed)
             self.check_task_not_loaded(recipe, incomplete)
+
+    # https://bugzilla.redhat.com/show_bug.cgi?id=706435
+    def test_task_result_datetimes_are_localised(self):
+        b = self.browser
+        recipe = self.job.recipesets[0].recipes[0]
+        self.go_to_recipe_view(recipe)
+        b.find_element_by_xpath('//a[text()="Show Results"]').click()
+        b.find_element_by_xpath(
+                '//div[@id="recipe-%d-results"]//table' % recipe.id)
+        recipe_task_start, recipe_task_finish, recipe_task_duration = \
+                b.find_elements_by_xpath(
+                    '//div[@id="recipe-%d-results"]//table'
+                    '/tbody/tr[1]/td[3]/div' % recipe.id)
+        self.check_datetime_localised(recipe_task_start.text.strip())
+        self.check_datetime_localised(recipe_task_finish.text.strip())
+        self.check_datetime_localised(b.find_element_by_xpath(
+                '//div[@id="recipe-%d-results"]//table'
+                '/tbody/tr[2]/td[3]' % recipe.id).text)
+
+    def check_datetime_localised(self, dt):
+        self.assert_(re.match(r'\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d [-+]\d\d:\d\d$', dt),
+                '%r does not look like a localised datetime' % dt)
 
     def test_return_system_reservation(self):
         b = self.browser

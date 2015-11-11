@@ -4,7 +4,6 @@
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.
 
-from turbogears import (expose, flash, widgets, redirect)
 from flask import request, jsonify
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm.exc import NoResultFound
@@ -54,6 +53,14 @@ def _update_recipeset(recipeset, data=None):
                         % (recipeset.id, priority))
             record_activity(u'Priority', old=recipeset.priority.value, new=priority.value)
             recipeset.priority = priority
+        if 'waived' in data:
+            if not recipeset.can_waive(identity.current.user):
+                raise Forbidden403('Cannot waive recipe set %s' % recipeset.id)
+            if not isinstance(data['waived'], bool):
+                raise ValueError('waived key must be true or false')
+            waived = data['waived']
+            record_activity(u'Waived', old=unicode(recipeset.waived), new=unicode(waived))
+            recipeset.waived = waived
 
 @app.route('/recipesets/<int:id>', methods=['PATCH'])
 @auth_required
@@ -169,58 +176,6 @@ def post_recipeset_comment(id):
 class RecipeSets(RPCRoot):
     # For XMLRPC methods in this class.
     exposed = True
-
-    hidden_id = widgets.HiddenField(name='id')
-    confirm = widgets.Label(name='confirm', default="Are you sure you want to cancel?")
-    message = widgets.TextArea(name='msg', label=_(u'Reason?'), help_text=_(u'Optional'))
-    cancel_form = widgets.TableForm(
-        'cancel_recipeset',
-        fields = [hidden_id, message, confirm],
-        action = 'really_cancel',
-        submit_text = _(u'Yes')
-    )
-    @identity.require(identity.not_anonymous())
-    @expose(template="bkr.server.templates.form")
-    def cancel(self, id):
-        """
-        Confirm cancel recipeset
-        """
-        try:
-            recipeset = RecipeSet.by_id(id)
-        except InvalidRequestError:
-            flash(_(u"Invalid recipeset id %s" % id))
-            redirect("/jobs/%s" % recipeset.job.id)
-        if not recipeset.can_cancel(identity.current.user):
-            flash(_(u"You don't have permission to cancel recipeset id %s" % id))
-            redirect("/jobs/%s" % recipeset.job.id)
-        return dict(
-            title = 'Cancel RecipeSet %s' % id,
-            form = self.cancel_form,
-            action = './really_cancel',
-            options = {},
-            value = dict(id = recipeset.id,
-                         confirm = 'really cancel recipeset %s?' % id),
-        )
-    @identity.require(identity.not_anonymous())
-    @expose()
-    def really_cancel(self, id, msg=None):
-        """
-        Confirm cancel recipeset
-        """
-        try:
-            recipeset = RecipeSet.by_id(id)
-        except InvalidRequestError:
-            flash(_(u"Invalid recipeset id %s" % id))
-            redirect("/jobs/%s" % recipeset.job.id)
-        if not recipeset.can_cancel(identity.current.user):
-            flash(_(u"You don't have permission to cancel recipeset id %s" % id))
-            redirect("/jobs/%s" % recipeset.job.id)
-        recipeset.cancel(msg)
-        recipeset.record_activity(user=identity.current.user, service=u'WEBUI',
-                                  field=u'Status', action=u'Cancelled', old='',
-                                  new='')
-        flash(_(u"Successfully cancelled recipeset %s" % id))
-        redirect("/jobs/%s" % recipeset.job.id)
 
     @cherrypy.expose
     @identity.require(identity.not_anonymous())
