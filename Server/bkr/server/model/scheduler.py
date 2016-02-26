@@ -2876,10 +2876,12 @@ class Recipe(TaskBase, DeclarativeMappedObject, ActivityMixin):
             u = identity.current.user
             data['can_edit'] = self.can_edit(u)
             data['can_update_reservation_request'] = self.can_update_reservation_request(u)
+            data['can_comment'] = self.can_comment(u)
             data['reviewed'] = self.get_reviewed_state(u)
         else:
             data['can_edit'] = False
             data['can_update_reservation_request'] = False
+            data['can_comment'] = False
             data['reviewed'] = None
         return data
 
@@ -3192,7 +3194,7 @@ class RecipeTask(TaskBase, DeclarativeMappedObject):
         return value
 
     def __json__(self):
-        return {
+        data = {
             'id': self.id,
             'name': self.name,
             'version': self.version,
@@ -3211,7 +3213,14 @@ class RecipeTask(TaskBase, DeclarativeMappedObject):
             'results': self.results,
             'is_finished': self.is_finished(),
             'logs': self.logs,
+            'comments': self.comments,
         }
+        if identity.current.user:
+            u = identity.current.user
+            data['can_comment'] = self.can_comment(u)
+        else:
+            data['can_comment'] = False
+        return data
 
     def delete(self):
         self.logs = []
@@ -3801,7 +3810,13 @@ class RecipeTaskResult(TaskBase, DeclarativeMappedObject):
             'score': self.score,
             'start_time': self.start_time,
             'logs': self.logs,
+            'comments': self.comments,
         }
+        if identity.current.user:
+            u = identity.current.user
+            data['can_comment'] = self.can_comment(u)
+        else:
+            data['can_comment'] = False
         return data
 
 
