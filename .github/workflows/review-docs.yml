@@ -1,6 +1,8 @@
 name: check-documentation
 
-on: [pull_request, push]
+# At this moment we can't use push due to GitHub issues
+# Ticket raised
+on: [pull_request]
 
 jobs:
   build:
